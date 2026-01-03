@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Diablo Clone - JS Puro</title>
+    <title>Diablo Clone - Phaser 3</title>
+    <!-- Cargar Phaser 3 -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <style>
         /* --- ESTILOS GENERALES Y HUD --- */
         body {
@@ -23,11 +25,6 @@
             display: flex;
             justify-content: center;
             align-items: center;
-        }
-
-        canvas {
-            background-color: #111;
-            box-shadow: 0 0 30px #000;
         }
 
         /* --- HUD INFERIOR (Estilo Diablo) --- */
@@ -99,17 +96,6 @@
         }
         .skill-slot:hover { border-color: #d4af37; }
 
-        /* --- MINIMAPA --- */
-        #minimap-container {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            width: 150px;
-            height: 150px;
-            background: rgba(0, 0, 0, 0.8);
-            border: 2px solid #444;
-        }
-
         /* --- VENTANAS (Inventario / Tienda) --- */
         .window {
             position: absolute;
@@ -147,6 +133,10 @@
         }
         .inv-slot:hover { border-color: #fff; }
         .inv-slot img { width: 32px; height: 32px; }
+        .inv-slot.equipped {
+            border-color: #d4af37;
+            box-shadow: 0 0 5px #d4af37;
+        }
 
         /* Tienda */
         .shop-item {
@@ -182,9 +172,6 @@
 <body>
 
 <div id="game-wrapper">
-    <!-- Canvas Principal -->
-    <canvas id="gameCanvas"></canvas>
-
     <!-- HUD -->
     <div id="hud">
         <!-- Orbe Vida -->
@@ -202,6 +189,7 @@
                 <div class="skill-slot">INV (I)</div>
             </div>
             <div style="margin-top:5px; font-size: 12px;">Oro: <span id="gold-display">0</span></div>
+            <div style="font-size: 10px; color: #aaa;">ATK: <span id="atk-display">10</span></div>
         </div>
 
         <!-- Orbe Maná -->
@@ -210,9 +198,6 @@
             <div class="orb-text" id="mana-text">50</div>
         </div>
     </div>
-
-    <!-- Minimapa -->
-    <canvas id="minimap-container" width="150" height="150"></canvas>
 
     <!-- Ventana Inventario -->
     <div id="inventory-window" class="window">
@@ -235,362 +220,521 @@
 <script>
 /**
  * ==========================================
- * 1. CONFIGURACIÓN Y ASSETS
+ * 1. CONFIGURACIÓN PHASER
  * ==========================================
  */
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const minimapCanvas = document.getElementById('minimap-container');
-const minimapCtx = minimapCanvas.getContext('2d');
-
-// Ajustar tamaño canvas
-canvas.width = 800;
-canvas.height = 600;
-
-// Constantes del Mundo
-const TILE_SIZE = 40;
-const MAP_WIDTH = 40;
-const MAP_HEIGHT = 40;
-
-// --- SECCIÓN DE SPRITES (PLACEHOLDERS) ---
-// Cuando tengas tus imágenes, reemplaza null por: new Image(); img.src = 'ruta.png';
-const Sprites = {
-    player: null, // Ej: new Image(); Sprites.player.src = 'assets/hero.png';
-    enemy: null,  // Ej: new Image(); Sprites.enemy.src = 'assets/skeleton.png';
-    wall: null,   // Ej: new Image(); Sprites.wall.src = 'assets/wall.png';
-    floor: null,  // Ej: new Image(); Sprites.floor.src = 'assets/floor.png';
-    item: null    // Ej: new Image(); Sprites.item.src = 'assets/sword.png';
-};
-
-/**
- * ==========================================
- * 2. ESTADO DEL JUEGO
- * ==========================================
- */
-let map = []; // 0: Piso, 1: Pared
-let camera = { x: 0, y: 0 };
-let keys = {};
-let mouse = { x: 0, y: 0, down: false };
-
-let player = {
-    x: 200, y: 200,
-    width: 30, height: 30,
-    speed: 4,
-    hp: 100, maxHp: 100,
-    mana: 50, maxMana: 50,
-    gold: 100,
-    inventory: [],
-    damage: 10
-};
-
-let enemies = [];
-let items = []; // Ítems en el suelo
-let npc = { x: 300, y: 300, width: 30, height: 30, active: false }; // Vendedor
-
+// Estado global para UI
 let uiState = {
     inventoryOpen: false,
-    shopOpen: false
+    shopOpen: false,
+    playerData: null // Referencia para actualizar UI
 };
 
-/**
- * ==========================================
- * 3. GENERACIÓN DE MAPA
- * ==========================================
- */
-function initMap() {
-    // Crear matriz vacía
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-        let row = [];
-        for (let x = 0; x < MAP_WIDTH; x++) {
-            // Bordes son paredes (1), interior piso (0)
-            if (x === 0 || x === MAP_WIDTH - 1 || y === 0 || y === MAP_HEIGHT - 1) row.push(1);
-            else if (Math.random() < 0.1) row.push(1); // Obstáculos aleatorios
-            else row.push(0);
-        }
-        map.push(row);
+class MainScene extends Phaser.Scene {
+    constructor() {
+        super('MainScene');
     }
-    // Limpiar área inicial
-    for(let y=4; y<10; y++) for(let x=4; x<10; x++) map[y][x] = 0;
-    
-    // Spawnear enemigos
-    for(let i=0; i<10; i++) {
-        enemies.push({
-            x: Math.random() * (MAP_WIDTH * TILE_SIZE),
-            y: Math.random() * (MAP_HEIGHT * TILE_SIZE),
-            width: 30, height: 30, hp: 50, maxHp: 50
+
+    preload() {
+        // --- CARGA DE ASSETS DESDE LA RAÍZ ---
+        // Asegúrate de tener estos archivos en la misma carpeta que index.html
+        this.load.spritesheet('player', 'player.png', { frameWidth: 32, frameHeight: 32 });
+        this.load.image('enemy', 'enemy.png');
+        this.load.image('wall', 'wall.png');
+        this.load.image('floor', 'floor.png');
+        this.load.image('item', 'item.png');
+        this.load.image('npc', 'npc.png');
+        this.load.image('door', 'door.png');
+
+        // ==========================================
+        // SECCIÓN DE SPRITES (PERSONALIZACIÓN)
+        // ==========================================
+        // Para usar tu propio personaje estilo Diablo 2:
+        // 1. Coloca tu sprite sheet en una carpeta (ej: assets/player.png).
+        // 2. Descomenta la línea de abajo y ajusta frameWidth/frameHeight.
+        // this.load.spritesheet('player', 'assets/player.png', { frameWidth: 32, frameHeight: 32 });
+        
+        // Para este ejemplo, generamos texturas dinámicas (Placeholders):
+        
+        /* --- GENERACIÓN DE TEXTURAS (COMENTADO PARA USAR IMÁGENES REALES) ---
+        // --- GENERACIÓN DE TEXTURAS (Placeholders) ---
+        // Jugador (Simulando Sprite Sheet con 2 frames para animación)
+        let g = this.make.graphics({x:0, y:0, add: false});
+        
+        // Frame 1: Idle/Walk 1
+        g.fillStyle(0x3366ff, 1);
+        g.fillRect(0, 0, 32, 32);
+        // Frame 2: Walk 2 (Color diferente para notar animación)
+        g.fillStyle(0x2244aa, 1);
+        g.fillRect(32, 0, 32, 32);
+        g.generateTexture('player_sheet', 64, 32); // Textura de 64x32 (2 frames de 32x32)
+
+        // Enemigo
+        g.clear();
+        g.fillStyle(0xcc0000, 1);
+        g.fillRect(0, 0, 32, 32);
+        g.generateTexture('enemy', 32, 32);
+
+        // Pared
+        g.clear();
+        g.fillStyle(0x555555, 1);
+        g.fillRect(0, 0, 40, 40);
+        g.fillStyle(0x333333, 1);
+        g.fillRect(0, 30, 40, 10); // Detalle 3D
+        g.generateTexture('wall', 40, 40);
+
+        // Piso
+        g.clear();
+        g.fillStyle(0x1a1a1a, 1);
+        g.fillRect(0, 0, 40, 40);
+        g.lineStyle(1, 0x222222);
+        g.strokeRect(0, 0, 40, 40);
+        g.generateTexture('floor', 40, 40);
+
+        // Ítem
+        g.clear();
+        g.fillStyle(0xffd700, 1);
+        g.fillCircle(10, 10, 8);
+        g.generateTexture('item', 20, 20);
+
+        // NPC
+        g.clear();
+        g.fillStyle(0x00ff00, 1);
+        g.fillRect(0, 0, 32, 32);
+        g.generateTexture('npc', 32, 32);
+
+        // Puerta (Salida de nivel)
+        g.clear();
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(0, 0, 40, 40);
+        g.generateTexture('door', 40, 40);
+        */
+    }
+
+    create() {
+        // --- CONFIGURACIÓN DE ANIMACIONES ---
+        // Usando el spritesheet 'player.png' cargado
+        this.anims.create({
+            key: 'walk',
+            frames: this.anims.generateFrameNumbers('player', { start: 0, end: 1 }), // Ajusta 'end' según tus frames
+            frameRate: 8,
+            repeat: -1
         });
+        this.anims.create({
+            key: 'idle',
+            frames: [ { key: 'player', frame: 0 } ],
+            frameRate: 1
+        });
+
+        // Grupo estático para paredes
+        this.walls = this.physics.add.staticGroup();
+        this.enemies = this.physics.add.group();
+        this.items = this.physics.add.group();
+        this.doorGroup = this.physics.add.staticGroup(); // Grupo para la puerta
+
+        // --- JUGADOR ---
+        this.player = this.physics.add.sprite(300, 300, 'player');
+        this.player.setCollideWorldBounds(true);
+        
+        // Datos del jugador (RPG)
+        this.player.dataValues = {
+            hp: 100, maxHp: 100,
+            mana: 50, maxMana: 50,
+            gold: 0,
+            level: 1, // Nivel actual de mazmorra
+            inventory: [],
+            equipment: { weapon: null, armor: null }, // Equipo actual
+            baseAttack: 10,
+            baseDefense: 0
+        };
+        uiState.playerData = this.player.dataValues; // Enlace para UI
+
+        // Colisión con paredes
+        this.physics.add.collider(this.player, this.walls);
+        this.physics.add.collider(this.enemies, this.walls);
+        this.physics.add.collider(this.enemies, this.enemies);
+        
+        // Colisión con puerta
+        this.physics.add.overlap(this.player, this.doorGroup, this.nextLevel, null, this);
+        // Recoger ítems
+        this.physics.add.overlap(this.player, this.items, this.pickupItem, null, this);
+
+        // --- CÁMARA ---
+        this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+        this.cameras.main.setZoom(1.2);
+
+        // --- MINIMAPA ---
+        this.minimap = this.cameras.add(630, 20, 150, 150).setZoom(0.15).setName('mini');
+        this.minimap.setBackgroundColor(0x000000);
+        this.minimap.startFollow(this.player);
+        this.minimap.setAlpha(0.8);
+        // Borde simple para minimapa (Gráfico UI)
+        let minimapBorder = this.add.graphics().setScrollFactor(0);
+        minimapBorder.lineStyle(2, 0x444444);
+        minimapBorder.strokeRect(630, 20, 150, 150);
+
+        // --- NPC ---
+        this.npc = this.physics.add.staticSprite(400, 400, 'npc');
+        let npcText = this.add.text(380, 370, "Vendedor", { fontSize: '12px', color: '#fff' });
+
+        // --- ILUMINACIÓN (FOG OF WAR) ---
+        // Usamos una RenderTexture oscura que cubre la pantalla
+        this.lightLayer = this.add.renderTexture(0, 0, 1600, 1600);
+        this.lightLayer.setDepth(100); // Encima de todo
+        this.lightLayer.fill(0x000000, 0.9); // Oscuridad casi total
+        
+        // El minimapa no debe ver la capa de oscuridad
+        this.minimap.ignore(this.lightLayer);
+
+        // --- CONTROLES ---
+        this.cursors = this.input.keyboard.addKeys({
+            up: Phaser.Input.Keyboard.KeyCodes.W,
+            down: Phaser.Input.Keyboard.KeyCodes.S,
+            left: Phaser.Input.Keyboard.KeyCodes.A,
+            right: Phaser.Input.Keyboard.KeyCodes.D,
+            interact: Phaser.Input.Keyboard.KeyCodes.E,
+            inv: Phaser.Input.Keyboard.KeyCodes.I
+        });
+
+        this.input.on('pointerdown', (pointer) => {
+            if (!uiState.shopOpen && !uiState.inventoryOpen) this.attack(pointer);
+        });
+
+        // Teclas UI
+        this.input.keyboard.on('keydown-E', () => this.interact());
+        this.input.keyboard.on('keydown-I', () => toggleInventory());
+
+        // INICIAR NIVEL 1
+        this.initLevel(1);
+
+        // Actualizar HUD inicial
+        updateHUD();
     }
-}
 
-/**
- * ==========================================
- * 4. MOTOR DEL JUEGO (UPDATE & DRAW)
- * ==========================================
- */
-function update() {
-    if (uiState.shopOpen) return; // Pausa si tienda abierta
+    // ==========================================
+    // SISTEMA DE NIVELES Y MAPA
+    // ==========================================
+    initLevel(level) {
+        this.player.dataValues.level = level;
+        
+        // Limpiar nivel anterior
+        this.walls.clear(true, true);
+        this.enemies.clear(true, true);
+        this.items.clear(true, true);
+        this.doorGroup.clear(true, true);
+        this.doorSpawned = false;
 
-    // --- MOVIMIENTO JUGADOR ---
-    let dx = 0, dy = 0;
-    if (keys['w']) dy = -player.speed;
-    if (keys['s']) dy = player.speed;
-    if (keys['a']) dx = -player.speed;
-    if (keys['d']) dx = player.speed;
+        // Configuración de mapa
+        const TILE_SIZE = 40;
+        const MAP_WIDTH = 40 + (level * 5); // Mapa crece con nivel
+        const MAP_HEIGHT = 40 + (level * 5);
+        
+        // Ajustar límites del mundo y cámara (SOLUCIÓN ÁREA NEGRA)
+        this.physics.world.setBounds(0, 0, MAP_WIDTH * TILE_SIZE, MAP_HEIGHT * TILE_SIZE);
+        this.cameras.main.setBounds(0, 0, MAP_WIDTH * TILE_SIZE, MAP_HEIGHT * TILE_SIZE);
+        
+        // Redimensionar capa de luz
+        this.lightLayer.resize(MAP_WIDTH * TILE_SIZE, MAP_HEIGHT * TILE_SIZE);
 
-    // Colisión simple con paredes
-    if (!isSolid(player.x + dx, player.y)) player.x += dx;
-    if (!isSolid(player.x, player.y + dy)) player.y += dy;
+        // Generar paredes y piso
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                let posX = x * TILE_SIZE + TILE_SIZE/2;
+                let posY = y * TILE_SIZE + TILE_SIZE/2;
 
-    // --- CÁMARA ---
-    // Centrar cámara en jugador
-    camera.x = player.x - canvas.width / 2;
-    camera.y = player.y - canvas.height / 2;
+                // Bordes o aleatorio
+                let isWall = (x === 0 || x === MAP_WIDTH - 1 || y === 0 || y === MAP_HEIGHT - 1 || Math.random() < 0.1);
+                
+                // Zona segura inicial (centro aprox)
+                if (x > 4 && x < 10 && y > 4 && y < 10) isWall = false;
 
-    // --- ENEMIGOS ---
-    enemies.forEach((en, index) => {
-        // IA: Perseguir si está cerca
-        let dist = Math.hypot(player.x - en.x, player.y - en.y);
-        if (dist < 300 && dist > 30) {
-            en.x += (player.x - en.x) * 0.01;
-            en.y += (player.y - en.y) * 0.01;
-        }
-        // Dañar jugador
-        if (dist < 30) {
-            player.hp -= 0.5;
-            updateHUD();
-        }
-    });
-
-    // --- RECOGER ÍTEMS ---
-    items.forEach((item, index) => {
-        let dist = Math.hypot(player.x - item.x, player.y - item.y);
-        if (dist < 30) {
-            player.inventory.push(item);
-            items.splice(index, 1);
-            renderInventory();
-        }
-    });
-
-    // --- MUERTE ---
-    if (player.hp <= 0) {
-        alert("Has muerto. Recargando...");
-        location.reload();
-    }
-}
-
-function draw() {
-    // Limpiar
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.translate(-camera.x, -camera.y);
-
-    // 1. DIBUJAR MAPA
-    // Optimización: Solo dibujar tiles visibles
-    let startCol = Math.floor(camera.x / TILE_SIZE);
-    let endCol = startCol + (canvas.width / TILE_SIZE) + 1;
-    let startRow = Math.floor(camera.y / TILE_SIZE);
-    let endRow = startRow + (canvas.height / TILE_SIZE) + 1;
-
-    for (let y = startRow; y <= endRow; y++) {
-        for (let x = startCol; x <= endCol; x++) {
-            if (y >= 0 && y < MAP_HEIGHT && x >= 0 && x < MAP_WIDTH) {
-                let tile = map[y][x];
-                let posX = x * TILE_SIZE;
-                let posY = y * TILE_SIZE;
-
-                if (tile === 1) {
-                    // PARED
-                    if (Sprites.wall) ctx.drawImage(Sprites.wall, posX, posY, TILE_SIZE, TILE_SIZE);
-                    else {
-                        ctx.fillStyle = '#444'; // Color pared
-                        ctx.fillRect(posX, posY, TILE_SIZE, TILE_SIZE);
-                        // Detalle 3D falso
-                        ctx.fillStyle = '#222';
-                        ctx.fillRect(posX, posY + TILE_SIZE - 10, TILE_SIZE, 10);
-                    }
+                if (isWall) {
+                    this.walls.create(posX, posY, 'wall');
                 } else {
-                    // PISO
-                    if (Sprites.floor) ctx.drawImage(Sprites.floor, posX, posY, TILE_SIZE, TILE_SIZE);
-                    else {
-                        ctx.fillStyle = '#1a1a1a'; // Color piso
-                        ctx.fillRect(posX, posY, TILE_SIZE, TILE_SIZE);
-                        ctx.strokeStyle = '#222';
-                        ctx.strokeRect(posX, posY, TILE_SIZE, TILE_SIZE);
-                    }
+                    this.add.image(posX, posY, 'floor');
                 }
             }
         }
+
+        // Reposicionar jugador
+        this.player.setPosition(300, 300);
+
+        // Spawnear Enemigos (Dificultad progresiva)
+        const enemyCount = 5 + (level * 3);
+        for(let i=0; i<enemyCount; i++) {
+            let x = Phaser.Math.Between(TILE_SIZE, MAP_WIDTH * TILE_SIZE - TILE_SIZE);
+            let y = Phaser.Math.Between(TILE_SIZE, MAP_HEIGHT * TILE_SIZE - TILE_SIZE);
+            
+            // Evitar spawnear muy cerca del jugador
+            if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) > 300) {
+                let enemy = this.enemies.create(x, y, 'enemy');
+                enemy.hp = 30 + (level * 10); // Más vida por nivel
+                enemy.maxHp = enemy.hp;
+                enemy.damage = 5 + level; // Más daño
+                enemy.setCollideWorldBounds(true);
+                enemy.setBounce(1);
+            }
+        }
+        
+        console.log(`Nivel ${level} iniciado. Enemigos: ${enemyCount}`);
     }
 
-    // 2. DIBUJAR ÍTEMS
-    items.forEach(item => {
-        ctx.fillStyle = '#d4af37'; // Dorado
-        ctx.beginPath();
-        ctx.arc(item.x + 15, item.y + 15, 8, 0, Math.PI * 2);
-        ctx.fill();
-        // Brillo
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = "gold";
-        ctx.shadowBlur = 0;
-    });
+    spawnDoor() {
+        if (this.doorSpawned) return;
+        this.doorSpawned = true;
+        
+        // Spawnear puerta lejos del jugador
+        let x = Phaser.Math.Between(200, this.physics.world.bounds.width - 200);
+        let y = Phaser.Math.Between(200, this.physics.world.bounds.height - 200);
+        
+        let door = this.doorGroup.create(x, y, 'door');
+        
+        // Efecto visual para avisar al jugador
+        this.tweens.add({
+            targets: door,
+            alpha: 0.5,
+            yoyo: true,
+            repeat: -1,
+            duration: 500
+        });
+        
+        // Mensaje flotante
+        let txt = this.add.text(x - 20, y - 40, "SALIDA", { fontSize: '16px', color: '#fff', backgroundColor: '#000' });
+        this.time.delayedCall(5000, () => txt.destroy());
+        
+        alert("¡Nivel completado! Busca la puerta blanca para avanzar.");
+    }
 
-    // 3. DIBUJAR NPC
-    ctx.fillStyle = '#00ff00';
-    ctx.fillRect(npc.x, npc.y, npc.width, npc.height);
-    ctx.fillStyle = '#fff';
-    ctx.font = "10px Arial";
-    ctx.fillText("Vendedor", npc.x - 5, npc.y - 5);
+    nextLevel() {
+        let nextLvl = this.player.dataValues.level + 1;
+        this.initLevel(nextLvl);
+    }
 
-    // 4. DIBUJAR ENEMIGOS
-    enemies.forEach(en => {
-        if (Sprites.enemy) {
-            ctx.drawImage(Sprites.enemy, en.x, en.y, en.width, en.height);
+    update() {
+        if (uiState.shopOpen) {
+            this.player.body.setVelocity(0);
+            return;
+        }
+
+        // Movimiento
+        const speed = 200;
+        this.player.body.setVelocity(0);
+
+        if (this.cursors.left.isDown) this.player.body.setVelocityX(-speed);
+        else if (this.cursors.right.isDown) this.player.body.setVelocityX(speed);
+
+        if (this.cursors.up.isDown) this.player.body.setVelocityY(-speed);
+        else if (this.cursors.down.isDown) this.player.body.setVelocityY(speed);
+
+        this.player.body.velocity.normalize().scale(speed);
+
+        // Animaciones del Jugador
+        if (this.player.body.velocity.length() > 0) {
+            this.player.play('walk', true);
         } else {
-            ctx.fillStyle = '#aa0000';
-            ctx.fillRect(en.x, en.y, en.width, en.height);
-            // Barra vida enemigo
-            ctx.fillStyle = 'red';
-            ctx.fillRect(en.x, en.y - 5, en.width * (en.hp/en.maxHp), 3);
+            this.player.play('idle', true);
         }
-    });
 
-    // 5. DIBUJAR JUGADOR
-    if (Sprites.player) {
-        ctx.drawImage(Sprites.player, player.x, player.y, player.width, player.height);
-    } else {
-        ctx.fillStyle = '#3366ff';
-        ctx.fillRect(player.x, player.y, player.width, player.height);
-    }
-
-    // Efecto de ataque (visual)
-    if (mouse.down) {
-        ctx.strokeStyle = '#fff';
-        ctx.beginPath();
-        ctx.moveTo(player.x + 15, player.y + 15);
-        ctx.lineTo(mouse.x + camera.x, mouse.y + camera.y);
-        ctx.stroke();
-    }
-
-    ctx.restore();
-
-    // 6. ILUMINACIÓN (FOG OF WAR)
-    // Dibujamos un rectángulo negro semitransparente sobre todo
-    // Y usamos 'destination-out' con un gradiente radial para "cortar" un agujero de luz
-    
-    // Crear capa oscura
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-    // No rellenamos todo de negro sólido, usamos el truco del gradiente inverso o simplemente dibujamos oscuridad alrededor
-    // Método simple: Gradiente radial centrado en jugador
-    
-    let screenX = player.x - camera.x + 15;
-    let screenY = player.y - camera.y + 15;
-
-    let gradient = ctx.createRadialGradient(screenX, screenY, 50, screenX, screenY, 400);
-    gradient.addColorStop(0, 'rgba(0,0,0,0)'); // Transparente en el centro
-    gradient.addColorStop(0.8, 'rgba(0,0,0,0.8)'); // Oscuro lejos
-    gradient.addColorStop(1, 'rgba(0,0,0,1)'); // Negro total
-
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
-
-    // 7. MINIMAPA
-    drawMinimap();
-}
-
-function isSolid(x, y) {
-    let col = Math.floor((x + 15) / TILE_SIZE); // +15 para centro aprox
-    let row = Math.floor((y + 15) / TILE_SIZE);
-    if (row < 0 || row >= MAP_HEIGHT || col < 0 || col >= MAP_WIDTH) return true;
-    return map[row][col] === 1;
-}
-
-function drawMinimap() {
-    minimapCtx.fillStyle = '#000';
-    minimapCtx.fillRect(0, 0, 150, 150);
-    
-    let scaleX = 150 / MAP_WIDTH;
-    let scaleY = 150 / MAP_HEIGHT;
-
-    // Dibujar paredes
-    minimapCtx.fillStyle = '#555';
-    for(let y=0; y<MAP_HEIGHT; y++) {
-        for(let x=0; x<MAP_WIDTH; x++) {
-            if(map[y][x] === 1) {
-                minimapCtx.fillRect(x*scaleX, y*scaleY, scaleX, scaleY);
+        // IA Enemigos
+        this.enemies.getChildren().forEach(enemy => {
+            let dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
+            if (dist < 300 && dist > 30) {
+                this.physics.moveToObject(enemy, this.player, 80);
+            } else {
+                enemy.body.setVelocity(0);
             }
+
+            // Daño al jugador
+            if (dist < 30) {
+                // Defensa reduce daño
+                let def = getPlayerStats(this.player.dataValues).def;
+                let dmg = Math.max(0.1, (enemy.damage || 5) * 0.02 - (def * 0.01)); // Fórmula simple
+                
+                this.player.dataValues.hp -= dmg;
+                updateHUD();
+                if(this.player.dataValues.hp <= 0) {
+                    this.scene.restart();
+                    alert("Has muerto");
+                }
+            }
+        });
+
+        // Chequear condición de victoria del nivel
+        if (this.enemies.countActive() === 0 && !this.doorSpawned) {
+            this.spawnDoor();
         }
+
+        // Iluminación (Fog of War)
+        // Rellenar de negro y borrar círculo en el jugador
+        this.lightLayer.fill(0x000000, 0.9);
+        this.lightLayer.erase('item', this.player.x, this.player.y); // Usamos la textura 'item' (círculo) como pincel de borrado
+        // Para un círculo más grande, podríamos usar un gráfico invisible o una textura dedicada
+        // Truco rápido: borrar varias veces o usar una textura de luz más grande.
+        // Aquí usaremos un gráfico máscara simple para mejor efecto visual en Phaser
+        // (Reemplazando la lógica de erase simple por una máscara visual si se desea, pero erase es funcional)
+        
+        // Mejor enfoque para "Luz":
+        // Crear un círculo de "luz" y usarlo para borrar la oscuridad
+        let light = this.make.graphics({ x: this.player.x, y: this.player.y, add: false });
+        light.fillStyle(0xffffff);
+        light.fillCircle(0, 0, 150);
+        this.lightLayer.erase(light, this.player.x, this.player.y);
     }
-    // Jugador
-    minimapCtx.fillStyle = '#0f0';
-    let pX = (player.x / TILE_SIZE) * scaleX;
-    let pY = (player.y / TILE_SIZE) * scaleY;
-    minimapCtx.fillRect(pX, pY, 3, 3);
-}
 
-/**
- * ==========================================
- * 5. LÓGICA DE COMBATE E INTERACCIÓN
- * ==========================================
- */
-function attack() {
-    // Lógica simple: Dañar enemigos en rango del clic
-    let worldMouseX = mouse.x + camera.x;
-    let worldMouseY = mouse.y + camera.y;
+    attack(pointer) {
+        // Convertir coordenadas de pantalla a mundo
+        let worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        
+        // Efecto visual
+        let graphics = this.add.graphics();
+        graphics.lineStyle(2, 0xffffff);
+        graphics.lineBetween(this.player.x, this.player.y, worldPoint.x, worldPoint.y);
+        this.tweens.add({
+            targets: graphics,
+            alpha: 0,
+            duration: 200,
+            onComplete: () => graphics.destroy()
+        });
 
-    enemies.forEach((en, index) => {
-        let dist = Math.hypot(worldMouseX - en.x, worldMouseY - en.y);
-        if (dist < 50) { // Rango de ataque
-            en.hp -= player.damage;
-            if (en.hp <= 0) {
-                // Drop ítem
-                items.push({
-                    x: en.x, y: en.y,
-                    name: "Poción Menor",
-                    type: "potion",
-                    value: 10
+        // Calcular daño total
+        const stats = getPlayerStats(this.player.dataValues);
+        const damage = stats.atk;
+
+        // Lógica de daño
+        this.enemies.getChildren().forEach(enemy => {
+            if (Phaser.Math.Distance.Between(worldPoint.x, worldPoint.y, enemy.x, enemy.y) < 50) {
+                enemy.hp -= damage;
+                // Feedback visual enemigo
+                this.tweens.add({
+                    targets: enemy,
+                    alpha: 0.5,
+                    yoyo: true,
+                    duration: 50
                 });
-                enemies.splice(index, 1);
-            }
-        }
-    });
-    
-    // Gasto de maná visual
-    if(player.mana > 0) player.mana -= 2;
-    updateHUD();
-}
 
-function interact() {
-    // Distancia al NPC
-    let dist = Math.hypot(player.x - npc.x, player.y - npc.y);
-    if (dist < 60) {
-        toggleShop();
+                if (enemy.hp <= 0) {
+                    this.dropLoot(enemy.x, enemy.y);
+                    enemy.destroy();
+                }
+            }
+        });
+
+        // Gasto maná
+        if(this.player.dataValues.mana > 0) {
+            this.player.dataValues.mana -= 2;
+            updateHUD();
+        }
+    }
+
+    dropLoot(x, y) {
+        // Probabilidad de drop
+        let rand = Math.random();
+        let itemData = null;
+        let color = 0xffd700; // Oro por defecto
+
+        if (rand < 0.4) {
+            // 40% Oro
+            itemData = { name: "Monedas de Oro", type: "gold", value: Phaser.Math.Between(10, 50) };
+        } else if (rand < 0.6) {
+            // 20% Poción
+            itemData = { name: "Poción Menor", type: "potion", value: 10 };
+            color = 0xff0000;
+        } else if (rand < 0.7) {
+            // 10% Arma
+            itemData = { name: "Espada de Hierro", type: "weapon", attackBonus: 5, value: 50 };
+            color = 0xaaaaaa;
+        } else if (rand < 0.8) {
+            // 10% Armadura
+            itemData = { name: "Peto de Cuero", type: "armor", defenseBonus: 3, value: 40 };
+            color = 0x8b4513;
+        }
+
+        if (itemData) {
+            let item = this.items.create(x, y, 'item');
+            item.setTint(color);
+            item.dataValues = itemData;
+        }
+    }
+
+    pickupItem(player, item) {
+        const data = item.dataValues;
+        
+        if (data.type === 'gold') {
+            // Acumular oro directamente
+            player.dataValues.gold += data.value;
+            // Texto flotante
+            let txt = this.add.text(player.x, player.y - 20, `+${data.value} Oro`, { fontSize: '12px', color: '#ffd700' });
+            this.tweens.add({ targets: txt, y: player.y - 50, alpha: 0, duration: 1000, onComplete: () => txt.destroy() });
+        } else {
+            // Al inventario
+            player.dataValues.inventory.push(data);
+        }
+        
+        item.destroy();
+        updateHUD();
+        renderInventory();
+    }
+
+    interact() {
+        if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) < 80) {
+            toggleShop();
+        }
     }
 }
 
+// Configuración Phaser
+const config = {
+    type: Phaser.AUTO,
+    width: 800,
+    height: 600,
+    parent: 'game-wrapper',
+    backgroundColor: '#000',
+    physics: {
+        default: 'arcade',
+        arcade: {
+            gravity: { y: 0 },
+            debug: false
+        }
+    },
+    scene: MainScene
+};
+
+const game = new Phaser.Game(config);
+
 /**
  * ==========================================
- * 6. SISTEMA DE UI (HUD, INVENTARIO, TIENDA)
+ * 2. SISTEMA DE UI (HTML/DOM)
  * ==========================================
  */
+function getPlayerStats(p) {
+    let atk = p.baseAttack;
+    let def = p.baseDefense;
+    if (p.equipment.weapon) atk += p.equipment.weapon.attackBonus || 0;
+    if (p.equipment.armor) def += p.equipment.armor.defenseBonus || 0;
+    return { atk, def };
+}
+
 function updateHUD() {
+    if (!uiState.playerData) return;
+    const p = uiState.playerData;
+    const stats = getPlayerStats(p);
+
     // Actualizar textos
-    document.getElementById('hp-text').innerText = Math.floor(player.hp);
-    document.getElementById('mana-text').innerText = Math.floor(player.mana);
-    document.getElementById('gold-display').innerText = player.gold;
+    document.getElementById('hp-text').innerText = Math.floor(p.hp);
+    document.getElementById('mana-text').innerText = Math.floor(p.mana);
+    document.getElementById('gold-display').innerText = p.gold;
+    document.getElementById('atk-display').innerText = stats.atk + " (Def: " + stats.def + ")";
 
     // Actualizar altura de los orbes (CSS height)
-    let hpPercent = (player.hp / player.maxHp) * 100;
-    let manaPercent = (player.mana / player.maxMana) * 100;
+    let hpPercent = (p.hp / p.maxHp) * 100;
+    let manaPercent = (p.mana / p.maxMana) * 100;
     
     document.getElementById('health-fill').style.height = hpPercent + '%';
     document.getElementById('mana-fill').style.height = manaPercent + '%';
 }
 
 function toggleInventory() {
+    if (!uiState.playerData) return;
     uiState.inventoryOpen = !uiState.inventoryOpen;
     let win = document.getElementById('inventory-window');
     win.style.display = uiState.inventoryOpen ? 'flex' : 'none';
@@ -598,15 +742,29 @@ function toggleInventory() {
 }
 
 function renderInventory() {
+    if (!uiState.playerData) return;
     let grid = document.getElementById('inventory-grid');
     grid.innerHTML = '';
-    player.inventory.forEach((item, index) => {
+    
+    const p = uiState.playerData;
+
+    uiState.playerData.inventory.forEach((item, index) => {
         let slot = document.createElement('div');
         slot.className = 'inv-slot';
         slot.innerText = item.name.substring(0, 2); // Icono texto simple
         
+        // Marcar si está equipado
+        if (p.equipment.weapon === item || p.equipment.armor === item) {
+            slot.classList.add('equipped');
+            slot.innerText += " (E)";
+        }
+
         // Tooltip
-        slot.onmouseover = (e) => showTooltip(e, item.name + " (Clic der. usar)");
+        let tooltipText = `${item.name}\nTipo: ${item.type}`;
+        if (item.attackBonus) tooltipText += `\nATK: +${item.attackBonus}`;
+        if (item.defenseBonus) tooltipText += `\nDEF: +${item.defenseBonus}`;
+        
+        slot.onmouseover = (e) => showTooltip(e, tooltipText);
         slot.onmouseout = hideTooltip;
         
         // Equipar / Usar
@@ -620,13 +778,30 @@ function renderInventory() {
 }
 
 function useItem(index) {
-    let item = player.inventory[index];
+    if (!uiState.playerData) return;
+    let item = uiState.playerData.inventory[index];
+    
     if (item.type === 'potion') {
-        player.hp = Math.min(player.hp + 20, player.maxHp);
-        player.inventory.splice(index, 1);
-        updateHUD();
-        renderInventory();
+        uiState.playerData.hp = Math.min(uiState.playerData.hp + 20, uiState.playerData.maxHp);
+        uiState.playerData.inventory.splice(index, 1);
+    } else if (item.type === 'weapon') {
+        // Equipar arma (toggle)
+        if (uiState.playerData.equipment.weapon === item) {
+            uiState.playerData.equipment.weapon = null; // Desequipar
+        } else {
+            uiState.playerData.equipment.weapon = item;
+        }
+    } else if (item.type === 'armor') {
+        // Equipar armadura
+        if (uiState.playerData.equipment.armor === item) {
+            uiState.playerData.equipment.armor = null;
+        } else {
+            uiState.playerData.equipment.armor = item;
+        }
     }
+    
+    updateHUD();
+    renderInventory();
 }
 
 function toggleShop() {
@@ -638,24 +813,33 @@ function toggleShop() {
         let list = document.getElementById('shop-list');
         list.innerHTML = '';
         let shopItems = [
-            { name: "Espada Larga", price: 50, type: "weapon" },
+            { name: "Espada Larga", price: 50, type: "weapon", attackBonus: 10 },
             { name: "Poción Salud", price: 10, type: "potion" },
-            { name: "Armadura Cuero", price: 100, type: "armor" }
+            { name: "Armadura Cuero", price: 100, type: "armor", defenseBonus: 5 },
+            { name: "Hacha de Guerra", price: 150, type: "weapon", attackBonus: 20 }
         ];
 
         shopItems.forEach(item => {
             let div = document.createElement('div');
             div.className = 'shop-item';
-            div.innerHTML = `<span>${item.name}</span> <button class="btn-buy" onclick="buyItem('${item.name}', ${item.price}, '${item.type}')">${item.price} Oro</button>`;
+            // Pasar objeto completo como string JSON es arriesgado en onclick, mejor usar índice o simplificar
+            // Para este ejemplo simple, pasamos parámetros clave
+            div.innerHTML = `<span>${item.name} (${item.price}g)</span> <button class="btn-buy" onclick="buyItem('${item.name}', ${item.price}, '${item.type}', ${item.attackBonus||0}, ${item.defenseBonus||0})">Comprar</button>`;
             list.appendChild(div);
         });
     }
 }
 
-window.buyItem = function(name, price, type) {
-    if (player.gold >= price) {
-        player.gold -= price;
-        player.inventory.push({ name: name, type: type });
+window.buyItem = function(name, price, type, atk, def) {
+    if (!uiState.playerData) return;
+    if (uiState.playerData.gold >= price) {
+        uiState.playerData.gold -= price;
+        
+        let newItem = { name: name, type: type, value: Math.floor(price/2) };
+        if (atk > 0) newItem.attackBonus = atk;
+        if (def > 0) newItem.defenseBonus = def;
+        
+        uiState.playerData.inventory.push(newItem);
         updateHUD();
         alert("Comprado: " + name);
     } else {
@@ -675,53 +859,6 @@ function hideTooltip() {
     document.getElementById('tooltip').style.display = 'none';
 }
 
-/**
- * ==========================================
- * 7. INPUTS Y BUCLE PRINCIPAL
- * ==========================================
- */
-window.addEventListener('keydown', e => {
-    keys[e.key] = true;
-    if (e.key.toLowerCase() === 'e') interact();
-    if (e.key.toLowerCase() === 'i') toggleInventory();
-});
-window.addEventListener('keyup', e => keys[e.key] = false);
-
-canvas.addEventListener('mousemove', e => {
-    let rect = canvas.getBoundingClientRect();
-    mouse.x = e.clientX - rect.left;
-    mouse.y = e.clientY - rect.top;
-});
-canvas.addEventListener('mousedown', () => {
-    mouse.down = true;
-    attack();
-});
-canvas.addEventListener('mouseup', () => mouse.down = false);
-
-// Bucle
-function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-}
-
-// Iniciar
-initMap();
-updateHUD();
-loop();
-
 </script>
-</body>
-</html>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Elixir Project</title>
-</head>
-<body>
-    <h1>Welcome to Elixir Project</h1>
-    <p>This is a sample page for the Elixir project.</p>
 </body>
 </html>
