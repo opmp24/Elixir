@@ -1,4 +1,440 @@
 <!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diablo Clone - Phaser JS</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #050505;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #888;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+        }
+        #game-container {
+            box-shadow: 0 0 20px #000;
+            border: 2px solid #333;
+        }
+        .instructions {
+            position: absolute;
+            bottom: 10px;
+            text-align: center;
+            width: 100%;
+            pointer-events: none;
+            font-size: 12px;
+        }
+    </style>
+    <!-- Cargar Phaser 3 desde CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+</head>
+<body>
+
+<div id="game-container"></div>
+<div class="instructions">
+    WASD: Mover | CLIC: Atacar | E: Interactuar/Comprar | I: Ver Inventario (Consola)
+</div>
+
+<script>
+/**
+ * CONFIGURACIÓN GLOBAL
+ * Aquí definimos el tamaño, físicas y escenas.
+ */
+const config = {
+    type: Phaser.AUTO,
+    width: 800,
+    height: 600,
+    parent: 'game-container',
+    pixelArt: true, // Crucial para el estilo retro
+    physics: {
+        default: 'arcade',
+        arcade: {
+            gravity: { y: 0 }, // Vista superior, sin gravedad
+            debug: false
+        }
+    },
+    scene: {
+        preload: preload,
+        create: create,
+        update: update
+    }
+};
+
+const game = new Phaser.Game(config);
+
+// Variables globales del juego
+let player;
+let cursors;
+let wasd;
+let enemies;
+let items; // Ítems en el suelo
+let npc;
+let lightLayer; // Para la oscuridad
+let uiText;
+let inventory = [];
+let gold = 0;
+
+// Estado del jugador para guardar
+const SAVE_KEY = 'diablo_clone_save_v1';
+
+/**
+ * ==========================================
+ * 1. CARGA DE ASSETS (SPRITES Y SONIDOS)
+ * ==========================================
+ */
+function preload() {
+    // ----------------------------------------------------------------
+    // INSTRUCCIONES PARA SPRITES PERSONALIZADOS:
+    // Para usar tus propias imágenes (Pixel Art / IA):
+    // 1. Crea una carpeta llamada 'assets' junto a este archivo.
+    // 2. Guarda tus imágenes allí (ej: player.png, enemy.png).
+    // 3. Descomenta las líneas 'this.load.image...' y comenta la sección 'GENERACIÓN DE TEXTURAS'.
+    // 
+    // Ejemplo de animación Stop Motion:
+    // this.load.spritesheet('player_anim', 'assets/player_sheet.png', { frameWidth: 32, frameHeight: 32 });
+    // ----------------------------------------------------------------
+
+    /* 
+    // --- ZONA DE CARGA REAL (Descomentar cuando tengas archivos) ---
+    // this.load.image('tiles', 'assets/dungeon_tiles.png');
+    // this.load.spritesheet('player', 'assets/hero.png', { frameWidth: 32, frameHeight: 32 });
+    // this.load.image('enemy', 'assets/skeleton.png');
+    // this.load.image('sword', 'assets/sword.png');
+    */
+
+    // --- GENERACIÓN DE TEXTURAS (Placeholders para que el código funcione ya) ---
+    
+    // Jugador (Cuadrado Azul)
+    let g = this.make.graphics({x:0, y:0, add: false});
+    g.fillStyle(0x3366ff, 1);
+    g.fillRect(0, 0, 32, 32);
+    g.generateTexture('player_placeholder', 32, 32);
+
+    // Enemigo (Cuadrado Rojo)
+    g.clear();
+    g.fillStyle(0xcc0000, 1);
+    g.fillRect(0, 0, 32, 32);
+    g.generateTexture('enemy_placeholder', 32, 32);
+
+    // Ítem (Círculo Dorado)
+    g.clear();
+    g.fillStyle(0xffcc00, 1);
+    g.fillCircle(10, 10, 8);
+    g.generateTexture('item_placeholder', 20, 20);
+
+    // NPC (Cuadrado Verde)
+    g.clear();
+    g.fillStyle(0x00cc44, 1);
+    g.fillRect(0, 0, 32, 32);
+    g.generateTexture('npc_placeholder', 32, 32);
+
+    // Suelo (Gris oscuro)
+    g.clear();
+    g.fillStyle(0x222222, 1);
+    g.fillRect(0, 0, 32, 32);
+    g.generateTexture('floor_tile', 32, 32);
+}
+
+/**
+ * ==========================================
+ * 2. CREACIÓN DEL MUNDO Y LÓGICA
+ * ==========================================
+ */
+function create() {
+    // --- MAPA BÁSICO ---
+    // Creamos un suelo simple repetido
+    this.add.tileSprite(400, 300, 1600, 1200, 'floor_tile');
+    
+    // Límites del mundo
+    this.physics.world.setBounds(0, 0, 1600, 1200);
+
+    // --- JUGADOR ---
+    player = this.physics.add.sprite(400, 300, 'player_placeholder');
+    player.setCollideWorldBounds(true);
+    player.health = 100;
+    player.maxHealth = 100;
+    player.lastAttack = 0;
+    
+    // Cámara sigue al jugador
+    this.cameras.main.startFollow(player, true, 0.09, 0.09);
+    this.cameras.main.setZoom(1.5); // Zoom para ver el pixel art mejor
+
+    // --- ANIMACIONES (Placeholder) ---
+    // Aquí es donde configurarías el estilo 'Stop Motion' usando frameRate bajo (ej: 8 o 12)
+    /*
+    this.anims.create({
+        key: 'walk',
+        frames: this.anims.generateFrameNumbers('player', { start: 0, end: 3 }),
+        frameRate: 8, // <--- ESTILO STOP MOTION
+        repeat: -1
+    });
+    */
+
+    // --- ENEMIGOS ---
+    enemies = this.physics.add.group();
+    spawnEnemies(10);
+
+    // --- ÍTEMS (Suelo) ---
+    items = this.physics.add.group();
+
+    // --- NPC (Vendedor) ---
+    npc = this.physics.add.staticSprite(200, 200, 'npc_placeholder');
+    let npcText = this.add.text(180, 160, "Vendedor (E)", { fontSize: '12px', color: '#fff' });
+
+    // --- ILUMINACIÓN (Niebla de Guerra) ---
+    // Creamos una textura negra que cubre todo
+    const width = this.physics.world.bounds.width;
+    const height = this.physics.world.bounds.height;
+    lightLayer = this.make.renderTexture({ width: width, height: height, add: true }, true);
+    lightLayer.setDepth(100); // Encima de todo excepto UI
+
+    // --- UI ---
+    uiText = this.add.text(10, 10, 'HP: 100 | Oro: 0', { 
+        font: '16px Courier', 
+        fill: '#ffffff',
+        backgroundColor: '#000000' 
+    }).setScrollFactor(0).setDepth(200);
+
+    // --- CONTROLES ---
+    cursors = this.input.keyboard.createCursorKeys();
+    wasd = this.input.keyboard.addKeys({
+        up: Phaser.Input.Keyboard.KeyCodes.W,
+        down: Phaser.Input.Keyboard.KeyCodes.S,
+        left: Phaser.Input.Keyboard.KeyCodes.A,
+        right: Phaser.Input.Keyboard.KeyCodes.D,
+        interact: Phaser.Input.Keyboard.KeyCodes.E
+    });
+
+    // Ataque con clic
+    this.input.on('pointerdown', (pointer) => {
+        attack(this);
+    });
+
+    // --- COLISIONES ---
+    this.physics.add.collider(player, enemies, (p, e) => {
+        takeDamage(5); // El enemigo daña al tocar
+    });
+    
+    this.physics.add.overlap(player, items, pickUpItem, null, this);
+    
+    // Cargar datos si existen
+    loadGame();
+}
+
+/**
+ * ==========================================
+ * 3. BUCLE PRINCIPAL (UPDATE)
+ * ==========================================
+ */
+function update(time, delta) {
+    // 1. Movimiento del Jugador
+    player.body.setVelocity(0);
+
+    let speed = 150;
+
+    if (cursors.left.isDown || wasd.left.isDown) player.body.setVelocityX(-speed);
+    else if (cursors.right.isDown || wasd.right.isDown) player.body.setVelocityX(speed);
+
+    if (cursors.up.isDown || wasd.up.isDown) player.body.setVelocityY(-speed);
+    else if (cursors.down.isDown || wasd.down.isDown) player.body.setVelocityY(speed);
+
+    // Normalizar diagonal
+    player.body.velocity.normalize().scale(speed);
+
+    // 2. Actualizar Iluminación
+    updateLighting(this);
+
+    // 3. IA de Enemigos (Perseguir)
+    enemies.getChildren().forEach(enemy => {
+        if (Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y) < 300) {
+            this.physics.moveToObject(enemy, player, 80);
+        } else {
+            enemy.body.setVelocity(0);
+        }
+    });
+
+    // 4. Interacción NPC
+    if (Phaser.Input.Keyboard.JustDown(wasd.interact)) {
+        if (Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y) < 100) {
+            interactNPC();
+        }
+    }
+
+    // 5. Actualizar UI
+    uiText.setText(`HP: ${player.health} | Oro:  | Ítems: ${inventory.length}`);
+    
+    // Guardado automático periódico (cada 5 segundos aprox, simplificado aquí)
+    if (time % 5000 < 20) saveGame();
+}
+
+/**
+ * ==========================================
+ * 4. SISTEMAS DE JUEGO (COMBATE, INVENTARIO)
+ * ==========================================
+ */
+
+function attack(scene) {
+    // Efecto visual simple de ataque (tween)
+    scene.tweens.add({
+        targets: player,
+        angle: 360,
+        duration: 200,
+        onComplete: () => { player.angle = 0; }
+    });
+
+    // Detectar enemigos cercanos
+    let hit = false;
+    enemies.getChildren().forEach(enemy => {
+        if (Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y) < 60) {
+            enemy.health -= 35;
+            
+            // Partículas de sangre (cuadraditos rojos)
+            let emitter = scene.add.particles(enemy.x, enemy.y, 'enemy_placeholder', {
+                speed: 100,
+                scale: { start: 0.1, end: 0 },
+                lifespan: 300,
+                blendMode: 'ADD',
+                maxParticles: 5
+            });
+
+            if (enemy.health <= 0) {
+                dropLoot(scene, enemy.x, enemy.y);
+                enemy.destroy();
+            }
+            hit = true;
+        }
+    });
+}
+
+function spawnEnemies(count) {
+    for (let i = 0; i < count; i++) {
+        let x = Phaser.Math.Between(100, 1500);
+        let y = Phaser.Math.Between(100, 1100);
+        // Evitar spawnear encima del jugador
+        if (Phaser.Math.Distance.Between(x, y, 400, 300) > 200) {
+            let enemy = enemies.create(x, y, 'enemy_placeholder');
+            enemy.health = 100;
+            enemy.setCollideWorldBounds(true);
+        }
+    }
+}
+
+function dropLoot(scene, x, y) {
+    // 50% de probabilidad de soltar ítem
+    if (Math.random() > 0.5) {
+        let item = items.create(x, y, 'item_placeholder');
+        // Datos del ítem
+        item.dataValues = {
+            name: "Espada Oxidada",
+            damage: 5,
+            value: 10
+        };
+    }
+}
+
+function pickUpItem(player, item) {
+    // Añadir al inventario
+    inventory.push(item.dataValues);
+    console.log("Recogido:", item.dataValues.name);
+    item.destroy();
+}
+
+function takeDamage(amount) {
+    player.health -= amount;
+    if (player.health <= 0) {
+        player.health = 0;
+        // Lógica de muerte simple
+        alert("¡Has muerto! Recargando...");
+        localStorage.removeItem(SAVE_KEY); // Borrar guardado al morir (Hardcore)
+        location.reload();
+    }
+}
+
+function interactNPC() {
+    if (gold >= 50) {
+        gold -= 50;
+        inventory.push({ name: "Poción de Salud", heal: 50, value: 25 });
+        player.health = Math.min(player.health + 50, player.maxHealth);
+        alert("Compraste una poción y te curaste. -50 Oro");
+    } else {
+        alert("Vendedor: 'Necesitas 50 de oro para una poción'.");
+    }
+}
+
+/**
+ * ==========================================
+ * 5. EFECTOS VISUALES (ILUMINACIÓN)
+ * ==========================================
+ */
+function updateLighting(scene) {
+    // Rellenar todo de negro (oscuridad)
+    lightLayer.clear();
+    lightLayer.fill(0x000000, 0.95); // 0.95 es la opacidad de la oscuridad
+
+    // "Borrar" la oscuridad donde está el jugador (Luz)
+    // Usamos el modo de mezcla ERASER para cortar un agujero en la capa negra
+    lightLayer.erase('item_placeholder', player.x, player.y); 
+    
+    // Truco: Dibujamos un círculo blanco con modo de mezcla ERASE para simular luz suave
+    // Como no tenemos assets de luz, usamos un círculo gráfico simple invertido o lógica de máscara.
+    // Para simplificar en un solo archivo sin assets complejos, usamos un "spotlight" simple:
+    
+    // Nota: Phaser Graphics mask es más complejo. 
+    // Aquí redibujamos la capa oscura con un agujero.
+    
+    // Método alternativo simple para "Niebla de Guerra":
+    // Dibujar un círculo transparente alrededor del jugador
+    // Esto requiere un shader o máscara compleja. 
+    // Para este ejemplo simple, usaremos un truco visual:
+    // La capa lightLayer ya está encima. Usamos una máscara de geometría.
+    
+    const maskShape = scene.make.graphics();
+    maskShape.fillStyle(0xffffff);
+    maskShape.fillCircle(player.x, player.y, 150); // Radio de luz
+    
+    // Invertir la máscara es complicado en Phaser simple.
+    // En su lugar, vamos a usar el método 'mask' nativo de la capa.
+    const mask = maskShape.createGeometryMask();
+    mask.setInvertAlpha(true);
+    lightLayer.setMask(mask);
+}
+
+/**
+ * ==========================================
+ * 6. GUARDADO Y CARGA (LOCALSTORAGE)
+ * ==========================================
+ */
+function saveGame() {
+    const saveData = {
+        x: player.x,
+        y: player.y,
+        health: player.health,
+        gold: gold,
+        inventory: inventory
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+}
+
+function loadGame() {
+    const saved = localStorage.getItem(SAVE_KEY);
+    if (saved) {
+        const data = JSON.parse(saved);
+        player.x = data.x;
+        player.y = data.y;
+        player.health = data.health;
+        gold = data.gold;
+        inventory = data.inventory || [];
+    }
+}
+
+</script>
+</body>
+</html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
